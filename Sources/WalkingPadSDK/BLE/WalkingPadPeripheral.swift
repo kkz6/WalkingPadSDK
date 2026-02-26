@@ -322,10 +322,12 @@ extension WalkingPadPeripheral: CBPeripheralDelegate {
             logger.info("FTMS Feature (2ACC): \(hex)")
         } else if characteristic.uuid == FTMSConstants.supportedSpeedRangeUUID {
             logger.info("FTMS Supported Speed Range (2AD4): \(hex)")
-        } else {
-            // Data from legacy F7 or other unknown service
+        } else if detectedProtocol != .ftms {
+            // Data from legacy F7 or other unknown service — only forward for legacy protocol
             logger.info("Other data from \(characteristic.uuid.uuidString) on service \(svcUUID)")
             delegate?.peripheralDidReceiveData(bytes)
+        } else {
+            logger.debug("Ignoring non-FTMS data from \(characteristic.uuid.uuidString) on service \(svcUUID)")
         }
     }
 

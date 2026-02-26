@@ -77,6 +77,7 @@ public final class WalkingPadController: @unchecked Sendable {
 
         switch activeProtocol {
         case .ftms:
+            ftmsControlRequested = false
             await sendFTMSControlAndStart()
         default:
             await sendCommand(WalkingPadCommand.startBelt())
@@ -203,6 +204,11 @@ public final class WalkingPadController: @unchecked Sendable {
             logger.info("Controller: No KingSmith service found, skipping handshake")
             return
         }
+        // FTMS mode: skip legacy handshake — KS service is only needed for sleep/wake
+        if activeProtocol == .ftms {
+            logger.info("Controller: FTMS mode — skipping KS handshake (sleep/wake still available)")
+            return
+        }
         logger.info("Controller: Sending KS init handshake")
         Task {
             connection.writeKS(KSCommand.initDevice())
@@ -308,7 +314,7 @@ extension WalkingPadController: WalkingPadConnectionDelegate {
         if let event = FTMSParser.parseMachineStatus(data) {
             logger.info("Controller: FTMS event = \(String(describing: event))")
             switch event {
-            case .stoppedByUser, .controlPermissionLost:
+            case .stoppedByUser, .pausedByUser, .controlPermissionLost:
                 ftmsControlRequested = false
             default:
                 break

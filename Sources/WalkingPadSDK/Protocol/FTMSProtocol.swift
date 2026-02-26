@@ -55,6 +55,13 @@ public enum FTMSParser {
         }
 
         let flags = UInt16(data[0]) | (UInt16(data[1]) << 8)
+
+        // FTMS spec: bits 14-15 are reserved and must be 0
+        if flags & 0xC000 != 0 {
+            logger.debug("FTMS: Rejecting data with reserved flag bits set (flags=0x\(String(flags, radix: 16)))")
+            return nil
+        }
+
         var offset = 2
 
         // Bit 0: More Data — 0 means instantaneous speed IS present
@@ -123,6 +130,12 @@ public enum FTMSParser {
             guard offset + 2 <= data.count else { return nil }
             elapsedTime = Int(UInt16(data[offset]) | (UInt16(data[offset + 1]) << 8))
             offset += 2
+        }
+
+        // Sanity check: walking pad speeds above 120 tenths (12.0 km/h) are clearly invalid
+        if speed > 120 {
+            logger.warning("FTMS: Rejecting implausible speed \(speed) tenths (\(Double(speed) / 10.0) km/h)")
+            return nil
         }
 
         let beltState: BeltState = speed > 0 ? .running : .idle

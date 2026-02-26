@@ -39,6 +39,7 @@ public final class WalkingPadConnection: NSObject, @unchecked Sendable {
 
     private let scanner: WalkingPadScanner
     private var peripheralWrapper: WalkingPadPeripheral?
+    private var connectionTimeoutTask: Task<Void, Never>?
     private(set) public var activeProtocol: DeviceProtocol?
     private(set) public var state: ConnectionState = .disconnected {
         didSet {
@@ -60,15 +61,50 @@ public final class WalkingPadConnection: NSObject, @unchecked Sendable {
 
     public func connect(to device: WalkingPadDevice) {
         logger.info("Connecting to device: \(device.name)")
+        connectionTimeoutTask?.cancel()
         state = .connecting
         activeProtocol = nil
         let wrapper = WalkingPadPeripheral(peripheral: device.peripheral)
         wrapper.delegate = self
         peripheralWrapper = wrapper
         scanner.connect(device.peripheral)
+
+        connectionTimeoutTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(15))
+            guard !Task.isCancelled else { return }
+            guard let self, self.state == .connecting || self.state == .connected else { return }
+            logger.warning("Connection timeout — stuck at \(String(describing: self.state)) after 15s, retrying...")
+            self.retryConnection(device)
+        }
+    }
+
+    private func retryConnection(_ device: WalkingPadDevice) {
+        if let wrapper = peripheralWrapper {
+            scanner.disconnect(wrapper.peripheral)
+        }
+        peripheralWrapper = nil
+        activeProtocol = nil
+
+        let wrapper = WalkingPadPeripheral(peripheral: device.peripheral)
+        wrapper.delegate = self
+        peripheralWrapper = wrapper
+        state = .connecting
+        scanner.connect(device.peripheral)
+
+        connectionTimeoutTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(15))
+            guard !Task.isCancelled else { return }
+            guard let self, self.state == .connecting || self.state == .connected else { return }
+            logger.error("Connection timeout on retry — giving up")
+            self.peripheralWrapper = nil
+            self.activeProtocol = nil
+            self.state = .disconnected
+        }
     }
 
     public func disconnect() {
+        connectionTimeoutTask?.cancel()
+        connectionTimeoutTask = nil
         guard let wrapper = peripheralWrapper else {
             logger.warning("disconnect() called but no peripheral wrapper")
             return
@@ -122,6 +158,8 @@ extension WalkingPadConnection: WalkingPadScannerConnectionDelegate {
 
     public func scannerDidDisconnect(_ peripheral: CBPeripheral, error: Error?) {
         guard peripheral.identifier == peripheralWrapper?.peripheral.identifier else { return }
+        connectionTimeoutTask?.cancel()
+        connectionTimeoutTask = nil
         logger.info("Peripheral disconnected: \(error?.localizedDescription ?? "clean")")
         peripheralWrapper = nil
         activeProtocol = nil
@@ -133,6 +171,8 @@ extension WalkingPadConnection: WalkingPadScannerConnectionDelegate {
 
 extension WalkingPadConnection: WalkingPadPeripheralDelegate {
     public func peripheralDidBecomeReady(protocol deviceProtocol: DeviceProtocol) {
+        connectionTimeoutTask?.cancel()
+        connectionTimeoutTask = nil
         activeProtocol = deviceProtocol
         logger.info("Connection READY, protocol: \(String(describing: deviceProtocol))")
         state = .ready
