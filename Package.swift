@@ -4,7 +4,7 @@ import PackageDescription
 
 let package = Package(
     name: "WalkingPadSDK",
-    platforms: [.macOS(.v14), .watchOS(.v10)],
+    platforms: [.macOS(.v14), .iOS(.v17), .watchOS(.v10)],
     products: [
         .library(name: "WalkingPadSDK", targets: ["WalkingPadSDK"]),
     ],
