@@ -13,6 +13,7 @@ public protocol WalkingPadPeripheralDelegate: AnyObject {
     func peripheralDidBecomeReady(protocol: DeviceProtocol)
     func peripheralDidReceiveData(_ data: [UInt8])
     func peripheralDidReceiveFTMSStatus(_ data: [UInt8])
+    func peripheralDidReceiveVendorData(_ data: [UInt8])
     func peripheralDidFailWithError(_ error: Error)
 }
 
@@ -38,6 +39,10 @@ public final class WalkingPadPeripheral: NSObject, @unchecked Sendable {
 
     // KingSmith custom service write characteristic (for sleep/wake commands)
     private(set) var ksWriteChar: CBCharacteristic?
+
+    // Vendor write characteristics for step count queries (FFC2/FFF2)
+    private(set) var vendorWriteChar1: CBCharacteristic?
+    private(set) var vendorWriteChar2: CBCharacteristic?
 
     // ALL discovered notify/write characteristics across ALL services
     private var allNotifyChars: [CBCharacteristic] = []
@@ -80,6 +85,20 @@ public final class WalkingPadPeripheral: NSObject, @unchecked Sendable {
         let hex = data.map { String(format: "%02X", $0) }.joined(separator: " ")
         logger.debug("KS Write: \(hex)")
         peripheral.writeValue(Data(data), for: char, type: .withoutResponse)
+    }
+
+    public func writeVendor(_ data: [UInt8]) {
+        let vendorData = Data(data)
+        if let char = vendorWriteChar1 {
+            peripheral.writeValue(vendorData, for: char, type: .withoutResponse)
+        }
+        if let char = vendorWriteChar2 {
+            peripheral.writeValue(vendorData, for: char, type: .withoutResponse)
+        }
+    }
+
+    public var hasVendorWriteChars: Bool {
+        vendorWriteChar1 != nil || vendorWriteChar2 != nil
     }
 
     public func unsubscribeAll() {
@@ -164,6 +183,20 @@ extension WalkingPadPeripheral: CBPeripheralDelegate {
             if let writeChar = characteristics.first(where: { $0.uuid == KingSmithConstants.writeUUID }) {
                 ksWriteChar = writeChar
                 logger.info("KS: Found write characteristic for sleep command")
+            }
+        }
+
+        // Record vendor write characteristics for step count queries
+        if service.uuid == FTMSConstants.vendorService1UUID {
+            if let writeChar = characteristics.first(where: { $0.uuid == FTMSConstants.vendorWrite1UUID }) {
+                vendorWriteChar1 = writeChar
+                logger.info("Vendor: Found FFC2 write characteristic for step queries")
+            }
+        }
+        if service.uuid == FTMSConstants.vendorService2UUID {
+            if let writeChar = characteristics.first(where: { $0.uuid == FTMSConstants.vendorWrite2UUID }) {
+                vendorWriteChar2 = writeChar
+                logger.info("Vendor: Found FFF2 write characteristic for step queries")
             }
         }
 
@@ -322,6 +355,10 @@ extension WalkingPadPeripheral: CBPeripheralDelegate {
             logger.info("FTMS Feature (2ACC): \(hex)")
         } else if characteristic.uuid == FTMSConstants.supportedSpeedRangeUUID {
             logger.info("FTMS Supported Speed Range (2AD4): \(hex)")
+        } else if characteristic.uuid == FTMSConstants.vendorNotify1UUID
+                    || characteristic.uuid == FTMSConstants.vendorNotify2UUID {
+            logger.debug("Vendor step data from \(characteristic.uuid.uuidString): \(hex)")
+            delegate?.peripheralDidReceiveVendorData(bytes)
         } else if detectedProtocol != .ftms {
             // Data from legacy F7 or other unknown service — only forward for legacy protocol
             logger.info("Other data from \(characteristic.uuid.uuidString) on service \(svcUUID)")

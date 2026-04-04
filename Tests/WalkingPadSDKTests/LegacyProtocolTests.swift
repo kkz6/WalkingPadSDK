@@ -89,6 +89,41 @@ struct LegacyProtocolTests {
         #expect(status?.appSpeed == 25)
     }
 
+    @Test("Parse status with steps (WLT6200 format)")
+    func parseStatusWithSteps() {
+        // 20-byte WLT6200 status with steps at bytes 11-13
+        var data: [UInt8] = Array(repeating: 0, count: 20)
+        data[0] = 0xF8
+        data[1] = 0xA2
+        data[2] = 1     // running
+        data[3] = 30    // speed
+        data[4] = 1     // manual
+        // time = 120s
+        let timeBytes = ByteUtils.int2byte(120)
+        data[5] = timeBytes[0]; data[6] = timeBytes[1]; data[7] = timeBytes[2]
+        // distance = 200
+        let distBytes = ByteUtils.int2byte(200)
+        data[8] = distBytes[0]; data[9] = distBytes[1]; data[10] = distBytes[2]
+        // steps = 450
+        let stepBytes = ByteUtils.int2byte(450)
+        data[11] = stepBytes[0]; data[12] = stepBytes[1]; data[13] = stepBytes[2]
+
+        let status = WalkingPadParser.parseStatus(data)
+        #expect(status != nil)
+        #expect(status?.steps == 450)
+    }
+
+    @Test("Parse status with zero steps returns nil steps")
+    func parseStatusZeroSteps() {
+        var data: [UInt8] = Array(repeating: 0, count: 18)
+        data[0] = 0xF8
+        data[1] = 0xA2
+        data[2] = 0
+        // steps bytes 11-13 are all zero
+        let status = WalkingPadParser.parseStatus(data)
+        #expect(status?.steps == nil) // zero steps → nil
+    }
+
     @Test("Reject non-status prefix")
     func rejectBadPrefix() {
         var data: [UInt8] = Array(repeating: 0, count: 18)

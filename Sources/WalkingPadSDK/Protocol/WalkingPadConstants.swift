@@ -36,5 +36,5 @@ public enum WalkingPadConstants {
 
     public static let minCommandSpacing: TimeInterval = 0.69
 
-    public static let deviceNamePrefixes = ["walkingpad", "ks-"]
+    public static let deviceNamePrefixes = ["walkingpad", "ks-", "ph-"]
 }

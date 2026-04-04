@@ -13,6 +13,15 @@ public enum FTMSConstants {
     nonisolated(unsafe) public static let machineStatusUUID = CBUUID(string: "2ADA")
     nonisolated(unsafe) public static let machineFeatureUUID = CBUUID(string: "2ACC")
     nonisolated(unsafe) public static let supportedSpeedRangeUUID = CBUUID(string: "2AD4")
+    nonisolated(unsafe) public static let trainingStatusUUID = CBUUID(string: "2AD3")
+
+    // Vendor services for KingSmith step count (optional)
+    nonisolated(unsafe) public static let vendorService1UUID = CBUUID(string: "FFC0")
+    nonisolated(unsafe) public static let vendorNotify1UUID = CBUUID(string: "FFC1")
+    nonisolated(unsafe) public static let vendorWrite1UUID = CBUUID(string: "FFC2")
+    nonisolated(unsafe) public static let vendorService2UUID = CBUUID(string: "FFF0")
+    nonisolated(unsafe) public static let vendorNotify2UUID = CBUUID(string: "FFF1")
+    nonisolated(unsafe) public static let vendorWrite2UUID = CBUUID(string: "FFF2")
 }
 
 // MARK: - FTMS Control Point Commands
@@ -41,6 +50,13 @@ public enum FTMSCommand {
 
     public static func pause() -> [UInt8] {
         [0x08, 0x02]
+    }
+
+    /// Vendor step count query command (for FFC2/FFF2 characteristics)
+    public static func vendorStepQuery() -> [UInt8] {
+        let sub: UInt8 = 0x01
+        let checksum = UInt8((UInt16(0xA2) ^ UInt16(sub)) & 0xFF)
+        return [0xF7, 0xA2, sub, checksum, 0xFD]
     }
 }
 
@@ -73,8 +89,13 @@ public enum FTMSParser {
             offset += 2
         }
 
-        // Bit 1: Average Speed
+        // Bit 1: Average Speed (uint16, 0.01 km/h units)
+        var avgSpeed: Int?
         if flags & 0x0002 != 0 {
+            if offset + 2 <= data.count {
+                let rawAvg = UInt16(data[offset]) | (UInt16(data[offset + 1]) << 8)
+                avgSpeed = Int(rawAvg) / 10 // Convert to tenths
+            }
             offset += 2
         }
 
@@ -140,7 +161,7 @@ public enum FTMSParser {
 
         let beltState: BeltState = speed > 0 ? .running : .idle
 
-        logger.debug("FTMS parsed: speed=\(speed) dist=\(distance)m time=\(elapsedTime)s cal=\(calories)")
+        logger.debug("FTMS parsed: speed=\(speed) avg=\(avgSpeed ?? 0) dist=\(distance)m time=\(elapsedTime)s cal=\(calories)")
 
         return TreadmillStatus(
             raw: data,
@@ -151,8 +172,18 @@ public enum FTMSParser {
             distance: distance,
             calories: calories,
             appSpeed: speed,
-            controllerButton: 0
+            controllerButton: 0,
+            avgSpeed: avgSpeed
         )
+    }
+
+    /// Parse vendor step count data from FFC1/FFF1 notifications
+    public static func parseVendorStepCount(_ data: [UInt8]) -> Int? {
+        guard data.count >= 18, data[0] == 0xF7, data[1] == 0xA2 else { return nil }
+        let s = Int(UInt16(data[7]) | (UInt16(data[8]) << 8))
+            | (Int(UInt16(data[9]) | (UInt16(data[10]) << 8)) << 16)
+        guard s > 0, s < 1_000_000 else { return nil }
+        return s
     }
 
     /// Parse FTMS Machine Status (characteristic 0x2ADA)

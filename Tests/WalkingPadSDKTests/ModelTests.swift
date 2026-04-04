@@ -10,6 +10,7 @@ struct ModelTests {
     func beltStateFromRaw() {
         #expect(BeltState(rawByte: 0) == .idle)
         #expect(BeltState(rawByte: 1) == .running)
+        #expect(BeltState(rawByte: 4) == .paused)
         #expect(BeltState(rawByte: 5) == .starting)
         #expect(BeltState(rawByte: 99) == .idle) // unknown defaults to idle
     }
@@ -18,6 +19,7 @@ struct ModelTests {
     func beltStateIsActive() {
         #expect(BeltState.idle.isActive == false)
         #expect(BeltState.running.isActive == true)
+        #expect(BeltState.paused.isActive == false)
         #expect(BeltState.starting.isActive == true)
     }
 
@@ -25,6 +27,7 @@ struct ModelTests {
     func beltStateLabels() {
         #expect(BeltState.idle.label == "Idle")
         #expect(BeltState.running.label == "Running")
+        #expect(BeltState.paused.label == "Paused")
         #expect(BeltState.starting.label == "Starting")
     }
 
@@ -73,6 +76,45 @@ struct ModelTests {
             time: 3725, distance: 0, calories: 0, appSpeed: 0, controllerButton: 0
         )
         #expect(status.formattedTime == "1:02:05")
+    }
+
+    @Test("steps field is optional and defaults to nil")
+    func stepsDefaultNil() {
+        let status = TreadmillStatus(
+            raw: [], beltState: .idle, speed: 0, mode: .manual,
+            time: 0, distance: 0, calories: 0, appSpeed: 0, controllerButton: 0
+        )
+        #expect(status.steps == nil)
+    }
+
+    @Test("steps field can be set")
+    func stepsCanBeSet() {
+        let status = TreadmillStatus(
+            raw: [], beltState: .running, speed: 30, mode: .manual,
+            time: 60, distance: 100, calories: 5, appSpeed: 30, controllerButton: 0,
+            steps: 150
+        )
+        #expect(status.steps == 150)
+    }
+
+    @Test("avgSpeed field is optional and defaults to nil")
+    func avgSpeedDefaultNil() {
+        let status = TreadmillStatus(
+            raw: [], beltState: .idle, speed: 0, mode: .manual,
+            time: 0, distance: 0, calories: 0, appSpeed: 0, controllerButton: 0
+        )
+        #expect(status.avgSpeed == nil)
+        #expect(status.avgSpeedKmh == nil)
+    }
+
+    @Test("avgSpeedKmh conversion")
+    func avgSpeedKmhConversion() {
+        let status = TreadmillStatus(
+            raw: [], beltState: .running, speed: 30, mode: .manual,
+            time: 0, distance: 0, calories: 0, appSpeed: 30, controllerButton: 0,
+            avgSpeed: 25
+        )
+        #expect(status.avgSpeedKmh == 2.5)
     }
 
     // MARK: - TreadmillLastRecord

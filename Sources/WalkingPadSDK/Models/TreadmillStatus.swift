@@ -11,9 +11,15 @@ public struct TreadmillStatus: Sendable {
     public let appSpeed: Int
     public let controllerButton: Int
     public let timestamp: Date
+    public let steps: Int?
+    public let avgSpeed: Int?
 
     public var speedKmh: Double { Double(speed) / 10.0 }
     public var distanceKm: Double { Double(distance) / 100.0 }
+    public var avgSpeedKmh: Double? {
+        guard let avg = avgSpeed else { return nil }
+        return Double(avg) / 10.0
+    }
 
     public var formattedTime: String {
         let hours = time / 3600
@@ -35,7 +41,9 @@ public struct TreadmillStatus: Sendable {
         calories: Int,
         appSpeed: Int,
         controllerButton: Int,
-        timestamp: Date = .now
+        timestamp: Date = .now,
+        steps: Int? = nil,
+        avgSpeed: Int? = nil
     ) {
         self.raw = raw
         self.beltState = beltState
@@ -47,5 +55,7 @@ public struct TreadmillStatus: Sendable {
         self.appSpeed = appSpeed
         self.controllerButton = controllerButton
         self.timestamp = timestamp
+        self.steps = steps
+        self.avgSpeed = avgSpeed
     }
 }

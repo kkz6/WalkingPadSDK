@@ -31,6 +31,7 @@ public protocol WalkingPadConnectionDelegate: AnyObject {
     func connectionDidBecomeReady(protocol: DeviceProtocol)
     func connectionDidReceiveData(_ data: [UInt8])
     func connectionDidReceiveFTMSStatus(_ data: [UInt8])
+    func connectionDidReceiveVendorData(_ data: [UInt8])
     func connectionDidFailWithError(_ error: Error)
 }
 
@@ -128,6 +129,14 @@ public final class WalkingPadConnection: NSObject, @unchecked Sendable {
         peripheralWrapper?.writeKS(data)
     }
 
+    public func writeVendor(_ data: [UInt8]) {
+        peripheralWrapper?.writeVendor(data)
+    }
+
+    public var hasVendorWriteChars: Bool {
+        peripheralWrapper?.hasVendorWriteChars ?? false
+    }
+
     public func unsubscribeAll() {
         peripheralWrapper?.unsubscribeAll()
     }
@@ -187,6 +196,11 @@ extension WalkingPadConnection: WalkingPadPeripheralDelegate {
     public func peripheralDidReceiveFTMSStatus(_ data: [UInt8]) {
         logger.debug("FTMS Status: \(data.map { String(format: "%02X", $0) }.joined(separator: " "))")
         delegate?.connectionDidReceiveFTMSStatus(data)
+    }
+
+    public func peripheralDidReceiveVendorData(_ data: [UInt8]) {
+        logger.debug("Vendor data: \(data.map { String(format: "%02X", $0) }.joined(separator: " "))")
+        delegate?.connectionDidReceiveVendorData(data)
     }
 
     public func peripheralDidFailWithError(_ error: Error) {

@@ -20,6 +20,15 @@ public enum WalkingPadParser {
         let appSpeed = Int(data[14])
         let controllerButton = Int(data[16])
 
+        // Steps from bytes 11-13 (uint24 big-endian) — present in WLT6200 status
+        var steps: Int?
+        if data.count >= 14 {
+            let s = ByteUtils.byte2int(Array(data[11...13]))
+            if s > 0 && s < 1_000_000 {
+                steps = s
+            }
+        }
+
         return TreadmillStatus(
             raw: data,
             beltState: beltState,
@@ -29,7 +38,8 @@ public enum WalkingPadParser {
             distance: distance,
             calories: 0,
             appSpeed: appSpeed,
-            controllerButton: controllerButton
+            controllerButton: controllerButton,
+            steps: steps
         )
     }
 

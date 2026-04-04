@@ -5,9 +5,12 @@
 //   WalkingPadDevice      — discovered BLE peripheral
 //   ConnectionState       — scanning / connecting / connected / ready
 //   DeviceProtocol        — .ftms or .legacy
-//   TreadmillStatus       — live speed, distance, time, calories
+//   TreadmillStatus       — live speed, distance, time, calories, steps, avgSpeed
 //   TreadmillLastRecord   — last session summary
-//   BeltState, TreadmillMode, SensitivityLevel, PreferenceKey, TargetType
+//   BeltState             — idle / running / paused / starting
+//   CalorieCalculator     — ACSM metabolic equation-based calorie calculation
+//   UserProfile           — user profile for calorie calculation
+//   TreadmillMode, SensitivityLevel, PreferenceKey, TargetType
 //   FTMSCommand, FTMSParser, FTMSMachineEvent, FTMSConstants
 //   KSCommand, KingSmithParser, KingSmithConstants
 //   WalkingPadCommand, WalkingPadParser, WalkingPadConstants, ByteUtils

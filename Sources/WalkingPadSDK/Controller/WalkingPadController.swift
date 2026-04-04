@@ -13,9 +13,16 @@ public final class WalkingPadController: @unchecked Sendable {
     public var lastRecord: TreadmillLastRecord?
     public var deviceName: String?
     public var activeProtocol: DeviceProtocol?
+    public var vendorSteps: Int = 0
 
     public var onStatusUpdate: ((TreadmillStatus) -> Void)?
     public var onConnectionStateChange: ((ConnectionState) -> Void)?
+
+    /// Optional calorie calculator — set a UserProfile to enable ACSM-based calorie tracking
+    public var calorieCalculator: CalorieCalculator?
+
+    /// Accumulated ACSM-calculated calories for the current session
+    public private(set) var calculatedCalories: Double = 0.0
 
     private let scanner: WalkingPadScanner
     private let connection: WalkingPadConnection
@@ -23,6 +30,8 @@ public final class WalkingPadController: @unchecked Sendable {
     private var lastCommandTime: Date?
     private var ftmsControlRequested = false
     private var targetSpeedHundredths: UInt16 = 0
+    private var pendingStartSpeed: UInt16?
+    private var lastCalorieTimestamp: Date?
 
     public init() {
         scanner = WalkingPadScanner()
@@ -56,6 +65,9 @@ public final class WalkingPadController: @unchecked Sendable {
         scanner.stopScanning()
         deviceName = device.name
         ftmsControlRequested = false
+        pendingStartSpeed = nil
+        calculatedCalories = 0
+        lastCalorieTimestamp = nil
         connection.connect(to: device)
     }
 
@@ -68,6 +80,15 @@ public final class WalkingPadController: @unchecked Sendable {
         currentStatus = nil
         activeProtocol = nil
         ftmsControlRequested = false
+        pendingStartSpeed = nil
+        vendorSteps = 0
+        lastCalorieTimestamp = nil
+    }
+
+    /// Reset accumulated calculated calories for a new session
+    public func resetCalculatedCalories() {
+        calculatedCalories = 0
+        lastCalorieTimestamp = nil
     }
 
     // MARK: - Controls
@@ -78,6 +99,7 @@ public final class WalkingPadController: @unchecked Sendable {
         switch activeProtocol {
         case .ftms:
             ftmsControlRequested = false
+            pendingStartSpeed = targetSpeedHundredths > 0 ? targetSpeedHundredths : 300 // default 3.0 km/h
             await sendFTMSControlAndStart()
         default:
             await sendCommand(WalkingPadCommand.startBelt())
@@ -86,6 +108,7 @@ public final class WalkingPadController: @unchecked Sendable {
 
     public func stopBelt() async {
         logger.info("Controller: stopBelt")
+        pendingStartSpeed = nil
 
         switch activeProtocol {
         case .ftms:
@@ -97,6 +120,7 @@ public final class WalkingPadController: @unchecked Sendable {
 
     public func pauseBelt() async {
         logger.info("Controller: pauseBelt")
+        pendingStartSpeed = nil
 
         switch activeProtocol {
         case .ftms:
@@ -142,7 +166,17 @@ public final class WalkingPadController: @unchecked Sendable {
     public func startPolling(interval: TimeInterval = 1.0) {
         stopPolling()
         if activeProtocol == .ftms {
-            logger.info("Controller: FTMS — data via notifications, no polling needed")
+            logger.info("Controller: FTMS — data via notifications, polling vendor steps only")
+            // For FTMS, only poll vendor characteristics for step count
+            if connection.hasVendorWriteChars {
+                pollingTask = Task { [weak self] in
+                    while !Task.isCancelled {
+                        guard let self else { return }
+                        self.queryVendorSteps()
+                        try? await Task.sleep(for: .seconds(interval))
+                    }
+                }
+            }
             return
         }
         logger.info("Controller: starting polling every \(interval)s")
@@ -222,6 +256,30 @@ public final class WalkingPadController: @unchecked Sendable {
         }
     }
 
+    // MARK: - Private: Vendor Step Queries
+
+    private func queryVendorSteps() {
+        connection.writeVendor(FTMSCommand.vendorStepQuery())
+    }
+
+    // MARK: - Private: Calorie Accumulation
+
+    private func accumulateCalories(speedKmh: Double) {
+        guard let calculator = calorieCalculator, speedKmh > 0.5 else {
+            lastCalorieTimestamp = nil
+            return
+        }
+
+        let now = Date()
+        if let lastTs = lastCalorieTimestamp {
+            let dt = now.timeIntervalSince(lastTs)
+            if dt > 0 && dt < 5 {
+                calculatedCalories += calculator.calories(atSpeedKmh: speedKmh, forSeconds: dt)
+            }
+        }
+        lastCalorieTimestamp = now
+    }
+
     // MARK: - Private: Command Dispatch
 
     private func sendFTMSControlAndStart() async {
@@ -287,14 +345,52 @@ extension WalkingPadController: WalkingPadConnectionDelegate {
         activeProtocol = deviceProtocol
         logger.info("Controller: device protocol = \(String(describing: deviceProtocol))")
         sendKSHandshake()
+        // Auto-start vendor step polling for FTMS devices
+        if deviceProtocol == .ftms {
+            startPolling()
+        }
     }
 
     public func connectionDidReceiveData(_ data: [UInt8]) {
         if activeProtocol == .ftms {
             if let status = FTMSParser.parseTreadmillData(data) {
                 logger.debug("Controller: FTMS — speed=\(status.speed), belt=\(String(describing: status.beltState))")
-                currentStatus = status
-                onStatusUpdate?(status)
+
+                // Smart start: send pending speed once belt starts moving
+                if status.beltState == .running, let pending = pendingStartSpeed {
+                    pendingStartSpeed = nil
+                    logger.info("Controller: Belt running, sending pending speed \(pending)")
+                    connection.write(FTMSCommand.requestControl())
+                    Task {
+                        try? await Task.sleep(for: .seconds(0.3))
+                        self.connection.write(FTMSCommand.setTargetSpeed(pending))
+                    }
+                }
+
+                // Merge vendor steps into status if available
+                var enrichedStatus = status
+                if vendorSteps > 0 {
+                    enrichedStatus = TreadmillStatus(
+                        raw: status.raw,
+                        beltState: status.beltState,
+                        speed: status.speed,
+                        mode: status.mode,
+                        time: status.time,
+                        distance: status.distance,
+                        calories: status.calories,
+                        appSpeed: status.appSpeed,
+                        controllerButton: status.controllerButton,
+                        timestamp: status.timestamp,
+                        steps: vendorSteps,
+                        avgSpeed: status.avgSpeed
+                    )
+                }
+
+                // Accumulate ACSM calories
+                accumulateCalories(speedKmh: enrichedStatus.speedKmh)
+
+                currentStatus = enrichedStatus
+                onStatusUpdate?(enrichedStatus)
             }
             return
         }
@@ -302,6 +398,7 @@ extension WalkingPadController: WalkingPadConnectionDelegate {
         // Legacy F7 parser
         if let status = WalkingPadParser.parseStatus(data) {
             logger.debug("Controller: F7 — speed=\(status.speed), belt=\(String(describing: status.beltState))")
+            accumulateCalories(speedKmh: status.speedKmh)
             currentStatus = status
             onStatusUpdate?(status)
         } else if let record = WalkingPadParser.parseLastRecord(data) {
@@ -316,9 +413,17 @@ extension WalkingPadController: WalkingPadConnectionDelegate {
             switch event {
             case .stoppedByUser, .pausedByUser, .controlPermissionLost:
                 ftmsControlRequested = false
+                pendingStartSpeed = nil
             default:
                 break
             }
+        }
+    }
+
+    public func connectionDidReceiveVendorData(_ data: [UInt8]) {
+        if let steps = FTMSParser.parseVendorStepCount(data) {
+            logger.debug("Controller: vendor steps = \(steps)")
+            vendorSteps = steps
         }
     }
 

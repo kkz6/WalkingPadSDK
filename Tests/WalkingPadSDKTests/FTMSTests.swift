@@ -28,6 +28,7 @@ struct FTMSTests {
         #expect(status?.calories == 12)
         #expect(status?.time == 120)
         #expect(status?.mode == .manual)
+        #expect(status?.avgSpeed == nil)
     }
 
     @Test("Parse speed-only flags (0x0000)")
@@ -63,14 +64,16 @@ struct FTMSTests {
         #expect(status?.beltState == .running)
     }
 
-    @Test("Parse with average speed flag skips 2 bytes")
+    @Test("Parse average speed field (bit 1)")
     func parseWithAverageSpeed() {
         // flags = 0x0002 (average speed present), bit 0 = 0 (instantaneous speed present)
         var data: [UInt8] = [0x02, 0x00]
         data += [0xC8, 0x00]       // instant speed = 200 (2.0 km/h)
-        data += [0x64, 0x00]       // average speed = 100 (skipped)
+        data += [0x64, 0x00]       // average speed = 100 (1.0 km/h)
         let status = FTMSParser.parseTreadmillData(data)
         #expect(status?.speed == 20) // 200 / 10
+        #expect(status?.avgSpeed == 10) // 100 / 10 = 10 tenths
+        #expect(status?.avgSpeedKmh == 1.0)
     }
 
     @Test("Parse data truncated mid-field returns nil")
@@ -78,6 +81,45 @@ struct FTMSTests {
         // flags indicate distance present (bit 2), but data is too short
         let data: [UInt8] = [0x04, 0x00, 0x64, 0x00, 0x01] // only 1 byte of distance instead of 3
         #expect(FTMSParser.parseTreadmillData(data) == nil)
+    }
+
+    // MARK: - Vendor Step Count Parsing
+
+    @Test("Parse vendor step count data")
+    func parseVendorSteps() {
+        var data: [UInt8] = Array(repeating: 0, count: 18)
+        data[0] = 0xF7
+        data[1] = 0xA2
+        // Steps at bytes 7-10 as two uint16 LE
+        data[7] = 0xE8  // low word = 0x03E8 = 1000
+        data[8] = 0x03
+        data[9] = 0x00  // high word = 0
+        data[10] = 0x00
+        let steps = FTMSParser.parseVendorStepCount(data)
+        #expect(steps == 1000)
+    }
+
+    @Test("Vendor step count rejects short data")
+    func parseVendorStepsTooShort() {
+        let data: [UInt8] = [0xF7, 0xA2, 0x00]
+        #expect(FTMSParser.parseVendorStepCount(data) == nil)
+    }
+
+    @Test("Vendor step count rejects wrong header")
+    func parseVendorStepsWrongHeader() {
+        var data: [UInt8] = Array(repeating: 0, count: 18)
+        data[0] = 0xF8 // wrong header
+        data[1] = 0xA2
+        #expect(FTMSParser.parseVendorStepCount(data) == nil)
+    }
+
+    @Test("Vendor step count rejects zero steps")
+    func parseVendorStepsZero() {
+        var data: [UInt8] = Array(repeating: 0, count: 18)
+        data[0] = 0xF7
+        data[1] = 0xA2
+        // All zeros = 0 steps, should return nil (guard s > 0)
+        #expect(FTMSParser.parseVendorStepCount(data) == nil)
     }
 
     // MARK: - Machine Status Parsing
@@ -157,6 +199,16 @@ struct FTMSTests {
     @Test("Reset command")
     func resetCommand() {
         #expect(FTMSCommand.reset() == [0x01])
+    }
+
+    @Test("Vendor step query command format")
+    func vendorStepQueryCommand() {
+        let cmd = FTMSCommand.vendorStepQuery()
+        #expect(cmd[0] == 0xF7)
+        #expect(cmd[1] == 0xA2)
+        #expect(cmd[2] == 0x01)
+        #expect(cmd.last == 0xFD)
+        #expect(cmd.count == 5)
     }
 }
 
