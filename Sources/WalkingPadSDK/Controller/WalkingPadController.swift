@@ -99,7 +99,7 @@ public final class WalkingPadController: @unchecked Sendable {
         switch activeProtocol {
         case .ftms:
             ftmsControlRequested = false
-            pendingStartSpeed = targetSpeedHundredths > 0 ? targetSpeedHundredths : 300 // default 3.0 km/h
+            pendingStartSpeed = targetSpeedHundredths > 0 ? targetSpeedHundredths : 100 // default 1.0 km/h
             await sendFTMSControlAndStart()
         default:
             await sendCommand(WalkingPadCommand.startBelt())
@@ -146,7 +146,15 @@ public final class WalkingPadController: @unchecked Sendable {
 
     public func sleepDevice() {
         logger.info("Controller: sleepDevice")
-        connection.writeKS(KSCommand.sleep())
+        guard connection.hasKingSmithService else {
+            logger.warning("Controller: No KS service — cannot sleep")
+            return
+        }
+        connection.writeKS(KSCommand.initDevice())
+        Task {
+            try? await Task.sleep(for: .seconds(0.3))
+            connection.writeKS(KSCommand.sleep())
+        }
     }
 
     public func wakeDevice() {
