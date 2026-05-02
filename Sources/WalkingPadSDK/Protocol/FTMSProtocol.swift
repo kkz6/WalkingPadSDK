@@ -103,7 +103,9 @@ public enum FTMSParser {
         var distance = 0
         if flags & 0x0004 != 0 {
             guard offset + 3 <= data.count else { return nil }
-            distance = Int(data[offset]) | (Int(data[offset + 1]) << 8) | (Int(data[offset + 2]) << 16)
+            let distanceMeters = Int(data[offset]) | (Int(data[offset + 1]) << 8) | (Int(data[offset + 2]) << 16)
+            // Convert meters to hundredths of km to match TreadmillStatus.distanceKm (distance / 100.0)
+            distance = distanceMeters / 10
             offset += 3
         }
 
