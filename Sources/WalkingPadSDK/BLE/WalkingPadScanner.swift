@@ -13,6 +13,7 @@ public protocol WalkingPadScannerConnectionDelegate: AnyObject {
     func scannerDidConnect(_ peripheral: CBPeripheral)
     func scannerDidFailToConnect(_ peripheral: CBPeripheral, error: Error?)
     func scannerDidDisconnect(_ peripheral: CBPeripheral, error: Error?)
+    func scannerDidRestore(_ peripheral: CBPeripheral)
 }
 
 public final class WalkingPadScanner: NSObject, @unchecked Sendable {
@@ -32,7 +33,19 @@ public final class WalkingPadScanner: NSObject, @unchecked Sendable {
         // status pipeline on the main thread, ensuring @Observable mutations
         // (currentStatus, onStatusUpdate) drive SwiftUI view updates live rather
         // than only refreshing when an unrelated main-thread event forces a render.
+        //
+        // On iOS we also opt into State Preservation & Restoration so an active
+        // connection survives the app being suspended or terminated in the
+        // background (e.g. while a workout is running and the phone is locked).
+        // iOS relaunches the app in the background on BLE events and calls
+        // centralManager(_:willRestoreState:) so we can re-adopt the peripheral.
+        #if os(iOS)
+        centralManager = CBCentralManager(delegate: self, queue: .main, options: [
+            CBCentralManagerOptionRestoreIdentifierKey: "com.gigcodes.walkero.central"
+        ])
+        #else
         centralManager = CBCentralManager(delegate: self, queue: .main)
+        #endif
         logger.info("Scanner initialized, waiting for Bluetooth state...")
     }
 
@@ -76,6 +89,14 @@ public final class WalkingPadScanner: NSObject, @unchecked Sendable {
 }
 
 extension WalkingPadScanner: CBCentralManagerDelegate {
+    nonisolated public func centralManager(_ central: CBCentralManager, willRestoreState dict: [String: Any]) {
+        let peripherals = dict[CBCentralManagerRestoredStatePeripheralsKey] as? [CBPeripheral] ?? []
+        logger.info("Restoring BLE state: \(peripherals.count) peripheral(s)")
+        for peripheral in peripherals {
+            connectionDelegate?.scannerDidRestore(peripheral)
+        }
+    }
+
     nonisolated public func centralManagerDidUpdateState(_ central: CBCentralManager) {
         logger.info("Bluetooth state changed: \(central.state.rawValue) (\(central.state.debugDescription))")
         logger.info("  isScanning=\(self.isScanning), centralManager.isScanning=\(central.isScanning)")

@@ -189,6 +189,23 @@ extension WalkingPadConnection: WalkingPadScannerConnectionDelegate {
         }
     }
 
+    public func scannerDidRestore(_ peripheral: CBPeripheral) {
+        logger.info("Re-adopting restored peripheral: \(peripheral.name ?? "unknown"), state=\(peripheral.state.rawValue)")
+        let wrapper = WalkingPadPeripheral(peripheral: peripheral)
+        wrapper.delegate = self
+        peripheralWrapper = wrapper
+
+        if peripheral.state == .connected {
+            // Already connected — resume by rediscovering services/characteristics.
+            state = .connected
+            wrapper.discoverServices()
+        } else {
+            // Connection was pending — let CoreBluetooth complete it.
+            state = .connecting
+            scanner.connect(peripheral)
+        }
+    }
+
     public func scannerDidDisconnect(_ peripheral: CBPeripheral, error: Error?) {
         guard peripheral.identifier == peripheralWrapper?.peripheral.identifier else { return }
         connectionTimeoutTask?.cancel()
