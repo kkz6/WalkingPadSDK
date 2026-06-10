@@ -68,13 +68,28 @@ public final class WalkingPadConnection: NSObject, @unchecked Sendable {
         let wrapper = WalkingPadPeripheral(peripheral: device.peripheral)
         wrapper.delegate = self
         peripheralWrapper = wrapper
-        scanner.connect(device.peripheral)
 
+        let peripheral = device.peripheral
+        logger.info("Peripheral state before connect: \(peripheral.state.rawValue) (0=disconnected,1=connecting,2=connected)")
+        logger.info("Central manager state: \(self.scanner.bluetoothState.rawValue) (5=poweredOn)")
+        scanner.connect(peripheral)
+        logger.info("Peripheral state after connect call: \(peripheral.state.rawValue)")
+
+        // Monitor the peripheral state every 2s to see if CoreBluetooth is making progress
         connectionTimeoutTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(15))
-            guard !Task.isCancelled else { return }
+            for tick in 1...7 {
+                try? await Task.sleep(for: .seconds(2))
+                guard !Task.isCancelled else { return }
+                guard let self else { return }
+                let pState = peripheral.state.rawValue
+                logger.info("Connection monitor [\(tick)] — peripheral.state=\(pState), our state=\(String(describing: self.state))")
+                if self.state == .ready || self.state == .disconnected {
+                    logger.info("Connection resolved, stopping monitor")
+                    return
+                }
+            }
             guard let self, self.state == .connecting || self.state == .connected else { return }
-            logger.warning("Connection timeout — stuck at \(String(describing: self.state)) after 15s, retrying...")
+            logger.warning("Connection timeout — stuck at \(String(describing: self.state)) after ~14s, retrying...")
             self.retryConnection(device)
         }
     }
@@ -83,20 +98,29 @@ public final class WalkingPadConnection: NSObject, @unchecked Sendable {
         if let wrapper = peripheralWrapper {
             scanner.disconnect(wrapper.peripheral)
         }
-        peripheralWrapper = nil
         activeProtocol = nil
 
-        let wrapper = WalkingPadPeripheral(peripheral: device.peripheral)
-        wrapper.delegate = self
-        peripheralWrapper = wrapper
-        state = .connecting
-        scanner.connect(device.peripheral)
-
+        // Wait for CoreBluetooth to fully cancel the previous connection before reconnecting.
+        // Without this delay, watchOS may silently ignore the new connect() call because
+        // the peripheral is still transitioning out of the previous connection attempt.
+        // NOTE: peripheralWrapper is NOT cleared until the new one is ready, to keep a
+        // strong reference to the CBPeripheral at all times.
         connectionTimeoutTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled else { return }
+            guard let self else { return }
+
+            let wrapper = WalkingPadPeripheral(peripheral: device.peripheral)
+            wrapper.delegate = self
+            self.peripheralWrapper = wrapper
+            self.state = .connecting
+            self.scanner.connect(device.peripheral)
+
             try? await Task.sleep(for: .seconds(15))
             guard !Task.isCancelled else { return }
-            guard let self, self.state == .connecting || self.state == .connected else { return }
+            guard self.state == .connecting || self.state == .connected else { return }
             logger.error("Connection timeout on retry — giving up")
+            self.scanner.disconnect(device.peripheral)
             self.peripheralWrapper = nil
             self.activeProtocol = nil
             self.state = .disconnected
@@ -106,13 +130,13 @@ public final class WalkingPadConnection: NSObject, @unchecked Sendable {
     public func disconnect() {
         connectionTimeoutTask?.cancel()
         connectionTimeoutTask = nil
-        guard let wrapper = peripheralWrapper else {
-            logger.warning("disconnect() called but no peripheral wrapper")
-            return
+        if let wrapper = peripheralWrapper {
+            logger.info("Disconnecting from device")
+            scanner.disconnect(wrapper.peripheral)
+            peripheralWrapper = nil
+        } else {
+            logger.warning("disconnect() called but no peripheral wrapper — resetting state")
         }
-        logger.info("Disconnecting from device")
-        scanner.disconnect(wrapper.peripheral)
-        peripheralWrapper = nil
         activeProtocol = nil
         state = .disconnected
     }

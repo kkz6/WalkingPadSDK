@@ -20,7 +20,6 @@ public final class WalkingPadScanner: NSObject, @unchecked Sendable {
     public weak var connectionDelegate: WalkingPadScannerConnectionDelegate?
 
     private var centralManager: CBCentralManager!
-    private let queue = DispatchQueue(label: "walkingpad.ble.scanner")
     private var isScanning = false
     private var discoveredIDs = Set<UUID>()
 
@@ -28,7 +27,12 @@ public final class WalkingPadScanner: NSObject, @unchecked Sendable {
 
     public override init() {
         super.init()
-        centralManager = CBCentralManager(delegate: self, queue: queue)
+        // Deliver CoreBluetooth callbacks on the main queue. Peripheral delegate
+        // callbacks inherit the central manager's queue, so this keeps the entire
+        // status pipeline on the main thread, ensuring @Observable mutations
+        // (currentStatus, onStatusUpdate) drive SwiftUI view updates live rather
+        // than only refreshing when an unrelated main-thread event forces a render.
+        centralManager = CBCentralManager(delegate: self, queue: .main)
         logger.info("Scanner initialized, waiting for Bluetooth state...")
     }
 
@@ -39,6 +43,7 @@ public final class WalkingPadScanner: NSObject, @unchecked Sendable {
             logger.notice("startScanning called but BLE not powered on (state=\(self.centralManager.state.rawValue)). Will auto-start when ready.")
             return
         }
+
         logger.info("Starting BLE scan (nil services, filtering by name)...")
         centralManager.scanForPeripherals(
             withServices: nil,
@@ -54,7 +59,14 @@ public final class WalkingPadScanner: NSObject, @unchecked Sendable {
 
     public func connect(_ peripheral: CBPeripheral) {
         logger.info("Connecting to peripheral: \(peripheral.name ?? "unknown") (\(peripheral.identifier))")
+        #if os(watchOS)
         centralManager.connect(peripheral, options: nil)
+        #else
+        centralManager.connect(peripheral, options: [
+            CBConnectPeripheralOptionNotifyOnConnectionKey: true,
+            CBConnectPeripheralOptionNotifyOnDisconnectionKey: true,
+        ])
+        #endif
     }
 
     public func disconnect(_ peripheral: CBPeripheral) {
@@ -66,6 +78,7 @@ public final class WalkingPadScanner: NSObject, @unchecked Sendable {
 extension WalkingPadScanner: CBCentralManagerDelegate {
     nonisolated public func centralManagerDidUpdateState(_ central: CBCentralManager) {
         logger.info("Bluetooth state changed: \(central.state.rawValue) (\(central.state.debugDescription))")
+        logger.info("  isScanning=\(self.isScanning), centralManager.isScanning=\(central.isScanning)")
         delegate?.scannerBluetoothStateChanged(central.state)
         if central.state == .poweredOn && isScanning {
             logger.info("BLE powered on and scan was pending, starting scan now...")
@@ -81,6 +94,7 @@ extension WalkingPadScanner: CBCentralManagerDelegate {
     ) {
         let name = peripheral.name ?? advertisementData[CBAdvertisementDataLocalNameKey] as? String ?? ""
         let lower = name.lowercased()
+
         let isMatch = WalkingPadConstants.deviceNamePrefixes.contains { lower.hasPrefix($0) }
 
         guard isMatch else { return }

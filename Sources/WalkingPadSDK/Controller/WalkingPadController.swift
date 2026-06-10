@@ -62,7 +62,6 @@ public final class WalkingPadController: @unchecked Sendable {
 
     public func connect(to device: WalkingPadDevice) {
         logger.info("Controller: connecting to \(device.name)")
-        scanner.stopScanning()
         deviceName = device.name
         ftmsControlRequested = false
         pendingStartSpeed = nil
@@ -350,6 +349,7 @@ extension WalkingPadController: WalkingPadConnectionDelegate {
     }
 
     public func connectionDidBecomeReady(protocol deviceProtocol: DeviceProtocol) {
+        scanner.stopScanning()
         activeProtocol = deviceProtocol
         logger.info("Controller: device protocol = \(String(describing: deviceProtocol))")
         sendKSHandshake()

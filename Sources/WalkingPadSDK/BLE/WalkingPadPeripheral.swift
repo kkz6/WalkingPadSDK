@@ -267,7 +267,13 @@ extension WalkingPadPeripheral: CBPeripheralDelegate {
             writeCharacteristic = writeChar
             logger.info("Primary protocol: Legacy F7 (notify=\(notifyChar.uuid.uuidString), write=\(writeChar.uuid.uuidString))")
         } else {
-            logger.error("No known protocol detected!")
+            logger.error("No known protocol detected! Services found but no FTMS or Legacy characteristics matched.")
+            delegate?.peripheralDidFailWithError(
+                NSError(domain: "WalkingPadSDK", code: -1, userInfo: [
+                    NSLocalizedDescriptionKey: "Device does not support any known protocol"
+                ])
+            )
+            return
         }
 
         // Read FTMS feature characteristics for diagnostics
@@ -396,13 +402,11 @@ extension WalkingPadPeripheral: CBPeripheralDelegate {
             logger.info("Subscribe to \(characteristic.uuid.uuidString) \(characteristic.isNotifying ? "OK" : "STOPPED") (mode: \(mode))")
         }
 
-        // Track subscription completions and declare ready when all are done
-        if pendingSubscriptions > 0 {
-            pendingSubscriptions -= 1
-            if pendingSubscriptions == 0 {
-                logger.info("All subscriptions confirmed. Declaring peripheral ready.")
-                declareReady()
-            }
+        // Track subscription completions (success or failure) and declare ready when all are done
+        pendingSubscriptions = max(0, pendingSubscriptions - 1)
+        if pendingSubscriptions == 0 {
+            logger.info("All subscriptions processed. Declaring peripheral ready.")
+            declareReady()
         }
     }
 }
