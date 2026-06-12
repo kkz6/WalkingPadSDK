@@ -53,6 +53,7 @@ public final class WalkingPadController: @unchecked Sendable {
     public func stopScanning() {
         logger.info("Controller: stopScanning")
         scanner.stopScanning()
+        discoveredDevices = []
         if connectionState == .scanning {
             connectionState = .disconnected
         }
